@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "Soccer @ HTB"
-date: "2023-03-29 21:30: +0200"
+date: 2023-03-29 19:30:00 +0200
 author: jne
 excerpt: Notes on HackTheBox's Soccer box
 ---
