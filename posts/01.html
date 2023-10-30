@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notes on Soccer @ HTB</title>
+    <link rel="stylesheet" type="text/css" href="../css/common.css">
+</head>
+<body>
+    <header>
+        <h1><a href="/">/jne/blog</a></h1>
+    </header>
+    <div class="post">
+        <h2>Notes on Soccer @ HTB</h2>
+        <span class="date">March 29, 2023</span>
+        <hr />
+        <p>Hi</p>
+        <p>This is not a full walkthrough, just some things I noticed that felt interesting enough to share and that I hadn’t seen in other guides for this box.</p>
+        <p>After conducting directory fuzzing, exploiting default credentials on a <code>tiny</code> fileserver, and exploiting PHP code injection, you end up discovering a web application with a blind-ish SQL injection vulnerability. While most people would simply set <code>sqlmap</code> loose on the endpoint (as did I, tbh), I wanted to try extracting the information to a file that I could browse to since I had the ability to read files from the <code>/var/www/html/tiny/uploads</code> path via the <code>tiny</code> fileserver.</p>
+        <p>There were (at least) two ways to decide if you SQL injection worked or not: via sleeps and error messages (which you can confirm when you gain a foothold on the server). Success resulted in <code>Ticket Exists.</code> and failure resulted in <code>Ticket Doesn't Exist.</code> For example, using <code>55259 union select 1,2,3</code> would give me <code>Ticket Exists.</code> and <code>55259 union (select 1,2)</code> would give me <code>Ticket Doesn't Exist.</code></p>
+        <p>Next, I tried writing the result to a file in the world writable directory <code>/var/www/html/tiny/uploads</code> by using <code>5259 union select 1,2,3 into outfile '/var/www/html/tiny/uploads/foo.txt';</code> but this resulted in a failure. I also attempted to upload to the <code>/tmp</code> directory, but the result was the same. This suggested that the <code>mysql</code> user did not have privileges to write files altogether.</p>
+        <p>Later, when I rooted the box, I attempted to do the same via the command line with the hardcoded credentials in the application code. I received an error message that confirmed my suspicion:</p>
+        <p><code>ERROR 1227 (42000): Access denied; you need (at least one of) the FILE privilege(s) for this operation.</code></p>
+        <p>When I attempted to execute the same statement as the <code>root</code> user in MySQL, I received another error message:</p>
+        <p><code>ERROR 1290 (HY000): The MySQL server is running with the --secure-file-priv option so it cannot execute this statement.</code></p>
+        <p>Seems that the appropriate security measures where in place.</p>
+        <p>That’s all. Take care!</p>
+    </div>
+</body>
+</html>
+

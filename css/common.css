@@ -1,0 +1,41 @@
+body {
+    background-color: #0d1117;
+    color: #e6edf3;
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+header {
+    padding: 20px;
+}
+h1 {
+    font-size: 36px;
+}
+code {
+    padding: .2em .4em;
+	margin: 0;
+    font-size: 85%;
+    white-space: break-spaces;
+	border-radius: 6px;
+    background-color: #343941;
+}
+a {
+    color: #e6edf3;
+    text-decoration: none;
+}
+.post {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 20px;
+    margin-bottom: 20px;
+    text-align: justify; 
+    line-height: 1.6;
+}
+.post h1 {
+    font-size: 28px;
+}
+.post p {
+    font-size: 18px;
+}
+.date {
+    font-size: 16px;
+}
