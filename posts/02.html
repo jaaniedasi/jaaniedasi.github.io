@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pondering on CVE-2022-2216 | /jne/blog</title>
+    <link rel="stylesheet" type="text/css" href="../css/main.css">
+</head>
+<body>
+    <header>
+        <h1><a class="no-underline" href="/">/jne/blog</a></h1>
+    </header>
+    <div class="post">
+        <h2>Pondering on CVE-2022-2216</h2>
+        <span class="date">December 20, 2023</span>
+        <hr />
+        <p>After watching <a href="https://www.youtube.com/watch?v=_avYi3_Lm9A">Nahamsec’s video</a>,
+        I found myself pondering why the payload with two <code>@</code> signs worked. The CVE description did not answer it for me so I decided to dig
+        deeper. Upon delving into the source code, I discovered that the primary issue wasn’t within the <code>parse-url</code> module but rather in the
+        <code>parse-path</code> library, which was authored by the same developer.</p>
+        <p>In version 4.0.4 of <code>parse-path</code>, custom code was implemented to segment the input string into various parts, each
+        representing an element of the URL. The problematic code was <a href="https://github.com/IonicaBizau/parse-path/blob/4.0.4/lib/index.js#L82">here</a>:</p>
+	<pre>
+// user@domain
+splits = output.resource.split("@");
+if (splits.length === 2) {
+    output.user = splits[0];
+    output.resource = splits[1];
+}
+        </pre>
+        <p>The input string is split based on the separator (<code>@</code>), and the <code>if</code> statement triggers only when there are two
+        elements in the resulting array: the username/password and the domain/path, etc. While this mechanism works well for common inputs like
+        <code>user@example.com</code> and <code>example.com</code>, a researcher discovered that inserting two <code>@</code> signs disrupts this logic.
+        From the program’s perspective, this is handled similarly to a URL without a username. Consequently, the host value could end up being
+        something like <code>example.com@@127.0.0.1/admin</code> — a clever method for smuggling requests into private network segments.</p>
+        <p>An application could utilize the parser’s output in a filter for Server-Side Request Forgery (SSRF), as illustrated in the
+        proof-of-concept in the CVE: <code>if(parsed.resource == '127.0.0.1')</code>. Given the application’s reliance on the parser for proper segmentation of the input string, one
+        could bypass the need for cumbersome regex to check for SSRF.</p>
+        <p>When a backend server (e.g., ExpressJS) issues a request to this SSRF payload URL, it appears to capture everything between the
+        <code>//</code> and the initial <code>@</code> sign, base64 encodes it, and inserts it into the <code>Authorization: Basic ...</code>
+        header.</p>
+	<img src="../pics/02_1.png" alt="Console output">
+        <p>It seems employing double <code>@</code> signs might be an effective strategy to deceive parsers and circumvent SSRF filters in the
+        future.</p>
+	<p>Later!</p>
+    </div>
+</body>
+</html>
+
