@@ -37,20 +37,20 @@ img {
     width: 100%;
     height: auto;
 }
+footer {
+    padding: 10px;
+}
 .listing {
     max-width: 600px;
     margin: 0 auto;
     margin-bottom: 20px;
-    text-align: center; 
     line-height: 1.6;
 }
 .post {
     max-width: 800px;
-    margin: 0 auto;
-    padding: 20px;
-    margin-bottom: 20px;
     text-align: justify; 
     line-height: 1.6;
+    margin: 0 auto;
 }
 .post h1 {
     font-size: 28px;
