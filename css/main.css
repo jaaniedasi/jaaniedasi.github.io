@@ -64,4 +64,7 @@ footer {
 .no-underline {
     text-decoration: none;
 }
-
+.dinkus {
+    max-width: 600px;
+    margin: 0 auto;
+}
