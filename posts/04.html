@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pondering on CVE-2023-7028 - don't forget me, Gitlab! | rogue code revelations</title>
+    <link rel="stylesheet" type="text/css" href="../css/main.css">
+</head>
+<body>
+    <div class="post">
+        <h2>Pondering on CVE-2023-7028 - don't forget me, Gitlab!</h2>
+        <span class="date">April 22, 2024</span>
+        <hr />
+		<p>So, I was learning about password reset/forgotten password implementation vulnerabilities on Portswigger Academy, and as part of that, I googled for more examples. One that stuck out was CVE-2023-7028. Since I didn’t really find a good in-depth technical analysis, I decided to dive in once again to try to understand what went wrong and where. And babble about it here.</p>
+		<p>The payload is really simple: instead of providing a single email to	the password reset endpoint, you <a href="https://gitlab.com/gitlab-org/gitlab/-/issues/436084">provide an array</a>. As a result, both you, the attacker, and the victim receive the reset password email with the URL containing the same token. But the token is only tied to the victim’s user account—their password will be changed.</p>
+		<p>That by itself is… interesting. Instantly, multiple questions came to my mind: 
+		<ul>
+			<li>How does the application determine which user it should map the generated token to?</li>
+			<li>Is there a consciously implemented solution to deal with both strings and arrays, or is accepting arrays a byproduct of some funky third-party library function that the developers were not aware of?</li>
+			<li>Why does it send the same link to two emails when it seemingly already found a legitimate user/email?</li>
+		</ul>
+		<p>Luckily, Gitlab is open-source! Or something close to that. In any case, you can review the changes made.</p>
+		<p>According to <a href="https://www.securityweek.com/gitlab-patches-critical-password-reset-vulnerability/">this</a> the vulnerability stems from a new feature that provides <em>‘users the option to have password reset emails sent to a secondary email address, to prevent cases where users could not reset their passwords because they did not have access to the primary email inbox.’</em></p>
+		<p>Cool.</p>
+		<p>This kind of hints that arrays were expected, even though accessing the API through the UI did not send the input data as an array. I guess the attacker discovered this by just trying their luck with input type conversion.</p>
+		<p>I focused on what the code looked like before the patch <a href="https://gitlab.com/gitlab-org/gitlab-foss/-/commits/v16.1.6">16.1.6</a>. Before I go on, I must warn you that I don’t really know much about Ruby on Rails. So, if I got anything wrong, sorry. But this is what I managed to scrape up in a day or so.</p>
+		<p>First of all, as much as I understand, the code that deals with password resets is the <a href="https://gitlab.com/gitlab-org/gitlab-foss/-/blob/74c15107a80459ce07e7b46a62e379a0495758dc/app/models/concerns/recoverable_by_any_email.rb#L9"><code>send_reset_password_instructions</code></a> function. It simply pops the email parameter value and passes it on to the next method.</p>
+		<p><a href="https://gitlab.com/gitlab-org/gitlab-foss/-/blob/74c15107a80459ce07e7b46a62e379a0495758dc/app/models/concerns/recoverable_by_any_email.rb#L20"><code>by_email_with_errors</code></a> then uses the same <code>email</code> values to call <code>find_by_any_email</code>.</p>
+		<p><a href="https://gitlab.com/gitlab-org/gitlab-foss/-/blob/74c15107a80459ce07e7b46a62e379a0495758dc/app/models/user.rb#L679"><code>find_by_any_email</code></a> calls another function (shocking, I know) named <code>by_any_email</code>.</p>
+		<p>Right, <a href="https://gitlab.com/gitlab-org/gitlab-foss/-/blob/74c15107a80459ce07e7b46a62e379a0495758dc/app/models/user.rb#L690"><code>by_any_email</code></a> seems to be where the meat of things is. This builds up a database query that the previous function in the chain (<code>find_by_any_email</code>) then invokes via the <code>.take</code> function to only select <em>one</em> record from the database (the first one, I’m guessing). In essence, the SQL query would	probably look something like this:</p>
+<pre>SELECT *
+FROM (
+	SELECT *
+	FROM users
+	WHERE email in ("victim@gmail.com", "attacker@gmail.com")
+	AND confirmed_at IS NOT NULL
+	UNION
+	SELECT users.*
+	FROM users
+	INNER JOIN emails on emails.user_id = users.id
+	WHERE emails.email in ("victim@gmail.com", "attacker@gmail.com")
+	AND confirmed_at IS NOT NULL
+) users;</pre>
+		<p>That is, look for users that have the input emails either as their primary confirmed email (a column in the <code>users</code> table) or as their confirmed secondary email (a column in the <code>emails</code> table that has a foreign key to the <code>users</code> table).</p>
+		<p>It should also be noted that both of the Ruby on Rails <code>scopes</code> that produce the two unioned SQL queries have explicit code to deal with both strings and arrays. For <code>iwhere</code>, that’s used for the first SQL query, it looks like this:</p>
+<pre>criteria = case value
+		   when Array
+			 criteria.where(value_in(column, value))
+		   else
+			 criteria.where(value_equal(column, value))
+		   end</pre>
+		<p>And the <code>:by_emails</code> scope transform (a string) input into an array (or leaves the input unchanged if already an array):
+		<code>Array(emails).map(&amp;:downcase)</code>.</p>
+		<p>If any of the input emails are found, the flow will continue with <a	href="https://gitlab.com/gitlab-org/gitlab-foss/-/blob/74c15107a80459ce07e7b46a62e379a0495758dc/app/models/concerns/recoverable_by_any_email.rb#L28">generating a password reset token</a> and adding it to the user object. Now, this is all sort of fine and dandy. But… the critical flaw comes from <a href="https://gitlab.com/gitlab-org/gitlab-foss/-/blob/74c15107a80459ce07e7b46a62e379a0495758dc/app/models/concerns/recoverable_by_any_email.rb#L14">here</a>:</p>
+		<pre>recoverable.send_reset_password_instructions(to: email) if recoverable&.persisted?</pre>
+		<p>The emails to which the password reset email is sent to are taken from <em>user input</em> and are not validated! The application went through all the trouble of finding a valid user from the database and then ditches the verified result just to send emails to whomever the user tells it to. And apparently, the Devise library can handle sending emails to multiple addresses just fine.</p>
+		<p>And that’s about it. Rather simple but deadly!</p>
+		<p>Again, if you’re reading this and feel like I missed the point entirely, hit me up! But until then, later!</p>			
+    </div>
+    <footer>
+        <a href="/">[Back to index]</a>
+    </footer>
+</body>
+</html>
+
