@@ -27,18 +27,16 @@ if (splits.length === 2) {
         </pre>
         <p>The input string is split based on the separator (<code>@</code>), and the <code>if</code> statement triggers only when there are two
         elements in the resulting array: the username/password and the domain/path, etc. While this mechanism works well for common inputs like
-        <code>user@example.com</code> and <code>example.com</code>, a researcher discovered that inserting two <code>@</code> signs disrupts this logic.
-        From the program’s perspective, this is handled similarly to a URL without a username. Consequently, the host value could end up being
-        something like <code>example.com@@127.0.0.1/admin</code> — a clever method for smuggling requests into private network segments.</p>
-        <p>An application could utilize the parser’s output in a filter for Server-Side Request Forgery (SSRF), as illustrated in the
-        proof-of-concept in the CVE: <code>if(parsed.resource == '127.0.0.1')</code>. Given the application’s reliance on the parser for proper segmentation of the input string, one
-        could bypass the need for cumbersome regex to check for SSRF.</p>
-        <p>When a backend server (e.g., ExpressJS) issues a request to this SSRF payload URL, it appears to capture everything between the
-        <code>//</code> and the initial <code>@</code> sign, base64 encodes it, and inserts it into the <code>Authorization: Basic ...</code>
+        <code>user@example.com</code>, <code>user:pass@example.com</code> and <code>example.com</code>, a researcher discovered that inserting two <code>@</code> signs disrupts this logic.
+        From the library’s perspective, this is handled similarly to a URL without a username. Consequently, the returned host value could end up being
+        something like <code>example.com@@127.0.0.1/admin</code> — a clever method for smuggling requests into private network segments (aka SSRF).</p>
+        <p>An application could utilize the parser’s output in a filter/WAF to protect against Server-Side Request Forgery (SSRF), as illustrated in the
+        <a href="https://huntr.com/bounties/505a3d39-2723-4a06-b1f7-9b2d133c92e1">proof-of-concept</a> of the CVE (<code>if(parsed.resource == '127.0.0.1')</code>). 'Cause this seems to be way easier than writing some cumbersome regex checks.</p>
+        <p>When a backend server (e.g., ExpressJS) issues a request to the aforementioned SSRF bypass payload, it appears to capture everything between the
+        <code>//</code> and the last <code>@</code> sign, base64 encode it, and insert it into the <code>Authorization: Basic ...</code>
         header.</p>
 	<img src="../pics/02_1.png" alt="Console output">
-        <p>It seems employing double <code>@</code> signs might be an effective strategy to deceive parsers and circumvent SSRF filters in the
-        future.</p>
+        <p>So throw this <code>@@</code> payload into your black box fuzzing list and keep your fingers crossed for juicy SSRF bugs!</p>
 	<p>Later!</p>
     </div>
     <footer>
