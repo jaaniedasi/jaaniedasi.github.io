@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pondering on GHSA-wm25-j4gw-6vr3 | rogue code revelations</title>
+    <link rel="stylesheet" type="text/css" href="../css/main.css">
+</head>
+<body>
+    <div class="post">
+        <h1>Pondering on GHSA-wm25-j4gw-6vr3</h1>
+        <span class="date">August 14, 2024</span>
+        <hr />
+			<p>Recently, I came across an interesting <a href="https://github.com/prest/prest/security/advisories/GHSA-wm25-j4gw-6vr3">Github
+			Advisory</a>. It highlighted a pretty serious unauthenticated SQL injection vulnerability that seemed pretty easy to exploit. However, the
+			<a href="https://github.com/prest/prest/pull/895">patch</a> left me a bit puzzled: it appeared that only the authentication bypass was fixed,
+			while nothing was done about the SQL injection. This led me to dive deeper into the code.</p>
+			<p>So, I cloned the repo, set up a simple Postgres container, fired up a Go debugger, and started to play around.</p>
+			<h2 id="auth-bypass">Auth bypass</h2>
+			<p>The <a href="https://docs.prestd.com/api-reference/auth">/auth</a> endpoint allows a user to generate a JWT token, provided that the user includes the correct username and password in the request. So, it makes sense that
+			access to this endpoint should be unauthenticated. The problem was that the default regex used to whitelist this route as unauthenticated was
+			slightly off: instead of matching only URLs that <strong>begin</strong> with the string <code>/auth</code>, it matched URLs that <strong>contained</strong> the string.</p>
+			<p>To fix that, the whitelist regex was improved from <code>/auth</code> to <code>^/auth</code>. But there’s actually <a href="https://github.com/prest/prest/pull/895#issuecomment-2282193373">another
+			edge case</a> I found. In short, <code>^/auth</code> also matches anything <code>auth*</code>. If you look at the <a href="https://github.com/prest/prest/blob/main/router/router.go#L38">routes</a>,
+			this means that if someone has a database named, say, <code>authors</code>, then potentially anyone can access any schema and table there. After some testing, it seems that changing the regex to
+			<code>^/auth$</code> would fix this.</p>
+			<p>Keeping this in mind, I tried to think of other ways to bypass authentication by creating discrepancies between the whitelist filter and routing. Essentially, trying to figure out an HTTP request where the
+			path would be processed as <code>/auth</code> in the whitelist filter, and then the request would be routed somewhere else. I could think of two possible ways: trying to fool the HTTP request parsing with some
+			uncommon URL structure, or by using custom special headers (like <code>X-Original-URL</code> in Symfony).</p>
+			<p>(Un)fortunately neither of those would work, I think. Both the <a href="https://github.com/prest/prest/blob/main/middlewares/middlewares.go#L49">whitelist
+			filter</a> and the <a href="https://github.com/gorilla/mux/blob/main/regexp.go#L204">gorilla/mux router</a> use the same <code>URL</code> field of the initial request instance and don’t do any parsing on their own. Likewise, I did not find any special route-manipulating headers that the <code>gorilla/mux</code> routing library would accept.</p>
+			<h2 id="sql-injection">SQL injection</h2>
+			<p>The SQL injection occurs in the <code>GET /{database}/{schema}/{table}</code> route. While this does end up in a <a href="https://github.com/prest/prest/blob/main/adapters/postgres/postgres.go#L671">prepared statement</a>, the <a href="https://github.com/prest/prest/blob/main/adapters/postgres/postgres.go#L1558">SQL generated</a> for this route is not parameterized: user input is simply concatenated to the end of a <code>SELECT</code> statement. And I get why: it’s not easy to write a parameterized query that allows the user to request data from different schemas and tables.</p>
+			<p>With the right injection syntax, you could query data from any schema and table as long as the user that initiated the database connection in the back end has privileges to do so. With the injection, the final SQL query looks like this:</p>
+			<pre>SELECT jsonb_agg(s) FROM (SELECT * FROM "test_db"."information_schema".tables) s;--"."auth"</pre>
+			<p>(Un)fortunately, I don’t think you can modify or delete data with this injection. I tried to append another command after the <code>SELECT</code> statement, but the prepared statement function only accepts a single query:</p>
+			<pre>curl -s --location '127.0.0.1:3000/test_db/public".some_table)%20s;drop%20table%20public.some_table;--/auth'
+{
+	"error": "pq: cannot insert multiple commands into a prepared statement"
+}</pre>
+			<p>With the auth bypass removed, the question remains if this still could be abused by an authenticated user? Specifically, does this allow legitamate users to access data they should not have access to, i.e., privilege escalation?</p>
+			<p>I think it <a href="https://github.com/prest/prest/pull/895#issuecomment-2263792574">does</a>. This is likely because <code>prest</code> uses a <a href="https://docs.prestd.com/get-started/permissions">separate permissions management system</a> than the underlying Postgres database. So, while the REST API can restrict access to certain tables, the SQL injection allows an authenticated user to escalate their privileges to that of the Postgres user making the connection to the database. And in a worst case scenario, this could be a DBA user.</p>
+			<h2 id="moar-vulns">Moar vulns?</h2>
+			<p>Maybe. I did only look at the patch and the code affected by that. But the project is interesting, and the devs are nice, so maybe I’ll hack on it some more.</p>
+			
+    </div>
+    <footer>
+        <a href="/">[Back to index]</a>
+    </footer>
+</body>
+</html>
+
